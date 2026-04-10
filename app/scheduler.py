@@ -1,6 +1,13 @@
 """
 Scheduler — runs daily jobs automatically.
-Start with: PYTHONPATH=. python3 app/scheduler.py
+Start with: PYTHONPATH=. python app/scheduler.py
+
+Jobs:
+  9:00 AM IST  — Market open alert
+  9:15–3:15 PM — Intraday scan every 15 min (NIFTY, BANKNIFTY, TCS, Crude)
+  Every 30 min — Geopolitical/macro news scan
+  9:15 AM IST  — Morning briefing
+  3:45 PM IST  — Evening portfolio scan
 """
 import logging
 import sys
@@ -9,10 +16,46 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from apscheduler.schedulers.blocking import BlockingScheduler
 from apscheduler.triggers.cron import CronTrigger
+from apscheduler.triggers.interval import IntervalTrigger
 
 logging.basicConfig(level=logging.INFO,
                     format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger(__name__)
+
+
+def market_open_alert():
+    """Send a market open notification at 9:00 AM."""
+    from app.bot.notifier import send_message
+    from datetime import datetime
+    send_message(
+        f"🔔 *Market Open*\n"
+        f"NSE/BSE markets are now open.\n"
+        f"Watching: NIFTY · BANKNIFTY · SENSEX · TCS · Crude Oil\n"
+        f"⏰ {datetime.now().strftime('%d %b %Y  %H:%M IST')}"
+    )
+    logger.info("Market open alert sent")
+
+
+def intraday_scan_job():
+    """Live intraday scan — runs every 15 min during market hours."""
+    from app.scanner.intraday import run_intraday_scan
+    logger.info("Running intraday scan...")
+    try:
+        count = run_intraday_scan()
+        logger.info(f"Intraday scan complete — {count} alerts")
+    except Exception as e:
+        logger.error(f"Intraday scan error: {e}")
+
+
+def geo_news_job():
+    """Geopolitical/macro news scan — runs every 30 min."""
+    from app.news.geo_alerts import run_geo_news_scan
+    logger.info("Running geo news scan...")
+    try:
+        count = run_geo_news_scan()
+        logger.info(f"Geo news scan complete — {count} alerts")
+    except Exception as e:
+        logger.error(f"Geo news scan error: {e}")
 
 
 def morning_briefing_job():
@@ -88,7 +131,16 @@ def evening_scan_job():
 def main():
     scheduler = BlockingScheduler(timezone="Asia/Kolkata")
 
-    # Morning briefing at 9:15am IST (before market opens at 9:30)
+    # ── Market open alert — 9:00 AM IST ─────────────────────────────────
+    scheduler.add_job(
+        market_open_alert,
+        CronTrigger(day_of_week="mon-fri", hour=9, minute=0,
+                    timezone="Asia/Kolkata"),
+        id="market_open",
+        name="Market open alert",
+    )
+
+    # ── Morning briefing — 9:15 AM IST ──────────────────────────────────
     scheduler.add_job(
         morning_briefing_job,
         CronTrigger(day_of_week="mon-fri", hour=9, minute=15,
@@ -97,7 +149,28 @@ def main():
         name="Morning briefing",
     )
 
-    # Evening scan at 3:45pm IST (after market closes at 3:30)
+    # ── Intraday scan — every 15 min, 9:15 AM – 3:15 PM IST ─────────────
+    scheduler.add_job(
+        intraday_scan_job,
+        CronTrigger(
+            day_of_week="mon-fri",
+            hour="9-15",
+            minute="0,15,30,45",
+            timezone="Asia/Kolkata",
+        ),
+        id="intraday_scan",
+        name="Intraday scan (every 15 min)",
+    )
+
+    # ── Geopolitical news — every 30 min all day ─────────────────────────
+    scheduler.add_job(
+        geo_news_job,
+        CronTrigger(minute="0,30", timezone="Asia/Kolkata"),
+        id="geo_news",
+        name="Geopolitical news scan",
+    )
+
+    # ── Evening portfolio scan — 3:45 PM IST ────────────────────────────
     scheduler.add_job(
         evening_scan_job,
         CronTrigger(day_of_week="mon-fri", hour=15, minute=45,
@@ -106,13 +179,19 @@ def main():
         name="Evening scan",
     )
 
-    logger.info("Scheduler started")
-    logger.info("Morning briefing: 9:15am IST weekdays")
-    logger.info("Evening scan: 3:45pm IST weekdays")
+    logger.info("=" * 50)
+    logger.info("Trading Assistant Scheduler started")
+    logger.info("  9:00 AM  — Market open alert")
+    logger.info("  9:15 AM  — Morning briefing")
+    logger.info("  9:15–3:15 PM — Intraday scan every 15 min")
+    logger.info("  Every 30 min — Geopolitical news")
+    logger.info("  3:45 PM  — Evening portfolio scan")
+    logger.info("  Watching: NIFTY · BANKNIFTY · SENSEX · TCS · Crude Oil")
+    logger.info("=" * 50)
 
-    # Run morning briefing immediately for testing
-    logger.info("Running morning briefing now for test...")
-    morning_briefing_job()
+    # Run intraday scan immediately so you see it working
+    logger.info("Running intraday scan now for test...")
+    intraday_scan_job()
 
     try:
         scheduler.start()
